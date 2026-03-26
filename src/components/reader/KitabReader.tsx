@@ -142,7 +142,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     }, 180)
   }
 
-  const onTextMouseUp = (e: React.MouseEvent | React.TouchEvent) => {
+  const onTextMouseUp = () => {
     const nativeSelection = window.getSelection()
     const selectedText = nativeSelection?.toString().trim() ?? ''
 
