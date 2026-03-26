@@ -27,8 +27,8 @@ export default function Navbar() {
     <header className="sticky top-0 z-20 border-b border-[#1B5E20]/15 bg-[#FDF6E3]/90 backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
         <Link to="/" className="flex items-center gap-2 text-[#1B5E20]">
-          <BookOpenIcon className="h-7 w-7" />
-          <span className="font-['Amiri'] text-2xl font-bold">المكتبة الذكية</span>
+          <BookOpenIcon className="h-7 w-7 flex-shrink-0" />
+          <span className="font-['Amiri'] text-xl font-bold truncate max-w-[120px] sm:max-w-none sm:text-2xl">المكتبة الذكية</span>
         </Link>
 
         <nav className="hidden items-center gap-2 md:flex">
@@ -67,7 +67,7 @@ export default function Navbar() {
               ) : (
                 <UserCircleIcon className="h-9 w-9 text-[#1B5E20]" />
               )}
-              <span className="max-w-28 truncate text-sm font-semibold text-[#3E2723]">
+              <span className="max-w-28 truncate text-sm font-semibold text-[#3E2723] hidden sm:inline-block">
                 {profile?.displayName || user.displayName || 'قارئ'}
               </span>
             </div>
@@ -80,16 +80,16 @@ export default function Navbar() {
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Link
               to="/login"
-              className="rounded-lg border border-[#1B5E20] px-3 py-2 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/10"
+              className="rounded-lg border border-[#1B5E20] px-2 py-2 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/10 sm:px-3"
             >
               دخول
             </Link>
             <Link
               to="/signup"
-              className="rounded-lg bg-[#1B5E20] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#174E1B]"
+              className="rounded-lg bg-[#1B5E20] px-2 py-2 text-sm font-semibold text-white transition hover:bg-[#174E1B] sm:px-3"
             >
               إنشاء حساب
             </Link>

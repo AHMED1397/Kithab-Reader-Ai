@@ -51,16 +51,21 @@ export default function VocabPopup({
   onClose,
 }: VocabPopupProps) {
   const [saved, setSaved] = useState(false)
+  const [runGemini, setRunGemini] = useState(false)
+  
+  const isPhrase = word.trim().includes(' ')
+  
   const runner = useCallback(() => analyzeWordWithGemini(word, context), [word, context])
-  const { data, loading, error } = useGemini(runner, open)
+  const { data, loading, error } = useGemini(runner, open && runGemini)
   const { saving, saveWord } = useVocabulary(uid)
   const { translationEn, translationTa, loading: myMemoryLoading } = useMyMemory(word, open)
   const { translationTa: lingvaTa, loading: lingvaLoading } = useLingva(word, open)
-  const { translation: ponsTranslation, loading: ponsLoading } = usePons(word, open)
-  const { data: wiktionaryData, loading: wiktionaryLoading } = useWiktionary(word, open)
+  const { translation: ponsTranslation, loading: ponsLoading } = usePons(word, open && !isPhrase)
+  const { data: wiktionaryData, loading: wiktionaryLoading } = useWiktionary(word, open && !isPhrase)
 
   useEffect(() => {
     setSaved(false)
+    setRunGemini(false)
   }, [word, open])
 
   const canQueue = useMemo(
@@ -232,6 +237,17 @@ export default function VocabPopup({
           {/* Gemini Analysis Section */}
           <div className="rounded-2xl border border-[#1B5E20]/20 bg-[#1B5E20]/5 p-5 shadow-inner">
             <h4 className="mb-3 text-xs font-bold text-[#1B5E20] uppercase tracking-wider opacity-60">تحليل مفصل (Gemini AI)</h4>
+            
+            {!runGemini && !data && !loading && !error ? (
+              <button
+                type="button"
+                onClick={() => setRunGemini(true)}
+                className="w-full rounded-xl bg-white/70 py-3 text-sm font-semibold text-[#1B5E20] border border-[#1B5E20]/20 hover:bg-[#1B5E20]/5 transition-colors"
+              >
+                اطلب تحليل الذكاء الاصطناعي
+              </button>
+            ) : null}
+
             {loading ? (
               <div className="flex flex-col gap-2">
                 <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-3/4" />

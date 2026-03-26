@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import useAuth from '../../hooks/useAuth'
 import useReaderPreferences from '../../hooks/useReaderPreferences'
 import useReadingProgress from '../../hooks/useReadingProgress'
@@ -7,8 +7,8 @@ import SentenceExplainer from '../vocab/SentenceExplainer'
 import VocabPopup from '../vocab/VocabPopup'
 import ChapterNav from './ChapterNav'
 import ClickableWord from './ClickableWord'
-import ProgressBar from './ProgressBar'
 import ReadingSettings from './ReadingSettings'
+import TutorialPopup from './TutorialPopup'
 
 interface KitabReaderProps {
   kitab: KitabDoc
@@ -40,10 +40,14 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [explainModalOpen, setExplainModalOpen] = useState(false)
   const [activeSentence, setActiveSentence] = useState('')
+  const [pendingSelectionIndex, setPendingSelectionIndex] = useState<number | null>(null)
+  const [tutorialOpen, setTutorialOpen] = useState(true)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const restoredChapterRef = useRef('')
   const isProgrammaticScrollRef = useRef(false)
   const persistTimerRef = useRef<number | null>(null)
+
+  const [tocOpen, setTocOpen] = useState(false)
 
   const { preferences, themeStyles, updatePreference } = useReaderPreferences(
     user?.uid,
@@ -106,7 +110,9 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     setExplainModalOpen(false)
     setWordSelection(null)
     setActiveSentence('')
+    setPendingSelectionIndex(null)
     restoredChapterRef.current = ''
+    setTocOpen(false) // Close TOC on mobile when chapter changes
   }, [currentChapterId])
 
   useEffect(() => {
@@ -117,7 +123,6 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     }
   }, [])
 
-  const progressPercent = ((currentIndex + 1) / Math.max(1, chapters.length)) * 100
 
   const onScroll = () => {
     if (!contentRef.current || !currentChapter || isProgrammaticScrollRef.current) {
@@ -137,7 +142,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     }, 180)
   }
 
-  const onTextMouseUp = () => {
+  const onTextMouseUp = (e: React.MouseEvent | React.TouchEvent) => {
     const nativeSelection = window.getSelection()
     const selectedText = nativeSelection?.toString().trim() ?? ''
 
@@ -189,44 +194,123 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     return <p className="rounded-xl bg-white p-4">لا توجد فصول متاحة.</p>
   }
 
-  const words = currentChapter.content.split(/\s+/).filter(Boolean)
+  const parsedData = useMemo(() => {
+    if (!currentChapter) return { words: [], paragraphs: [] }
+    const paragraphs = currentChapter.content.split(/\n\n+|\n/).filter(Boolean)
+    const allWords: string[] = []
+    const paraData = paragraphs.map(para => {
+      const paraWords = para.split(/\s+/).filter(Boolean)
+      const data = paraWords.map(w => {
+        const item = { word: w, globalIndex: allWords.length }
+        allWords.push(w)
+        return item
+      })
+      return data
+    })
+    return { words: allWords, paragraphs: paraData }
+  }, [currentChapter])
+
+  const handleWordClick = (index: number) => {
+    if (pendingSelectionIndex === null) {
+      setPendingSelectionIndex(index)
+    } else if (pendingSelectionIndex === index) {
+      setWordSelection({
+        word: parsedData.words[index],
+        context: surroundingContext(parsedData.words, index),
+      })
+      setPendingSelectionIndex(null)
+    } else {
+      const start = Math.min(pendingSelectionIndex, index)
+      const end = Math.max(pendingSelectionIndex, index)
+      
+      if (end - start < 20) {
+        setWordSelection({
+          word: parsedData.words.slice(start, end + 1).join(' '),
+          context: surroundingContext(parsedData.words, start),
+        })
+      }
+      setPendingSelectionIndex(null)
+    }
+  }
 
   return (
     <section className="space-y-3">
-      <ProgressBar value={progressPercent} />
 
-      <header className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#1B5E20]/20 bg-[#FDF6E3] p-4 shadow-sm">
-        <div>
-          <h1 className="font-['Amiri'] text-4xl font-bold text-[#1B5E20]">{kitab.title}</h1>
-          <p className="text-[#6D4C41]">{kitab.author}</p>
+      <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#1B5E20]/20 bg-[#FDF6E3] p-4 shadow-sm">
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate font-['Amiri'] text-2xl font-bold text-[#1B5E20] sm:text-4xl">{kitab.title}</h1>
+          <p className="truncate text-sm text-[#6D4C41] sm:text-base">{kitab.author}</p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          className="rounded-lg border border-[#1B5E20]/30 px-3 py-2 text-sm font-semibold text-[#1B5E20]"
-        >
-          إعدادات القراءة
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTocOpen(true)}
+            className="rounded-lg border border-[#1B5E20]/30 px-3 py-2 text-sm font-semibold text-[#1B5E20] lg:hidden"
+          >
+            الفهرس
+          </button>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="rounded-lg border border-[#1B5E20]/30 px-3 py-2 text-sm font-semibold text-[#1B5E20]"
+          >
+            الإعدادات
+          </button>
+        </div>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        <ChapterNav
-          chapters={chapters}
-          currentChapterId={currentChapter.id}
-          collapsed={collapsedNav}
-          onToggle={() => setCollapsedNav((prev) => !prev)}
-          onSelect={setCurrentChapterId}
-        />
+        {/* TOC for Desktop */}
+        <div className="hidden lg:block">
+          <ChapterNav
+            chapters={chapters}
+            currentChapterId={currentChapter.id}
+            collapsed={collapsedNav}
+            onToggle={() => setCollapsedNav((prev) => !prev)}
+            onSelect={setCurrentChapterId}
+          />
+        </div>
 
-        <article className="space-y-3 rounded-2xl border border-[#1B5E20]/20 bg-[#FDF6E3] p-4 shadow-sm">
-          <h2 className="font-['Amiri'] text-3xl font-bold text-[#1B5E20]">{currentChapter.title}</h2>
+        {/* TOC for Mobile (Drawer) */}
+        {tocOpen && (
+          <div className="fixed inset-0 z-50 flex lg:hidden">
+            <div
+              className="fixed inset-0 bg-black/40 backdrop-blur-sm"
+              onClick={() => setTocOpen(false)}
+            />
+            <div className="relative flex w-80 max-w-[85vw] flex-col bg-[#FDF6E3] p-4 shadow-xl">
+              <div className="mb-4 flex items-center justify-between border-b border-[#1B5E20]/10 pb-2">
+                <h3 className="text-xl font-bold text-[#1B5E20]">الفهرس</h3>
+                <button
+                  onClick={() => setTocOpen(false)}
+                  className="rounded-lg p-2 text-[#6D4C41] hover:bg-[#F9A825]/10"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto">
+                <ChapterNav
+                  chapters={chapters}
+                  currentChapterId={currentChapter.id}
+                  collapsed={false}
+                  onToggle={() => {}}
+                  onSelect={setCurrentChapterId}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <article className="space-y-3 rounded-2xl border border-[#1B5E20]/20 bg-[#FDF6E3] p-4 shadow-sm md:p-6">
+          <h2 className="font-['Amiri'] text-2xl font-bold text-[#1B5E20] sm:text-3xl">{currentChapter.title}</h2>
 
           <div
             ref={contentRef}
             onScroll={onScroll}
             onMouseUp={onTextMouseUp}
-            className="max-h-[70vh] overflow-auto rounded-xl border border-[#1B5E20]/10 p-5"
+            onTouchEnd={onTextMouseUp}
+            className="max-h-[60vh] overflow-auto rounded-xl border border-[#1B5E20]/10 p-4 sm:max-h-[70vh] sm:p-6"
             style={{
               background: themeStyles.background,
               color: themeStyles.color,
@@ -235,29 +319,27 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
               fontFamily: preferences.fontFamily,
             }}
           >
-            <p className="text-right leading-[inherit]">
-              {words.map((word, index) => (
-                <span key={`${word}-${index}`} className="inline-block">
-                  <ClickableWord
-                    word={word}
-                    onClick={(value) =>
-                      setWordSelection({
-                        word: value,
-                        context: surroundingContext(words, index),
-                      })
-                    }
-                  />{' '}
-                </span>
-              ))}
-            </p>
+            {parsedData.paragraphs.map((paraWords, pIndex) => (
+              <p key={`p-${pIndex}`} className="mb-4 text-right leading-[inherit]">
+                {paraWords.map(({ word, globalIndex }) => (
+                  <span key={`${word}-${globalIndex}`} className="inline-block">
+                    <ClickableWord
+                      word={word}
+                      isPending={pendingSelectionIndex === globalIndex}
+                      onClick={() => handleWordClick(globalIndex)}
+                    />{' '}
+                  </span>
+                ))}
+              </p>
+            ))}
           </div>
 
-          <div className="flex flex-wrap justify-between gap-2">
+          <div className="flex justify-between gap-4">
             <button
               type="button"
               onClick={previousChapter}
               disabled={currentIndex === 0}
-              className="rounded-lg border border-[#1B5E20]/30 px-3 py-2 text-sm font-semibold text-[#1B5E20] disabled:opacity-50"
+              className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
             >
               الفصل السابق
             </button>
@@ -266,7 +348,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
               type="button"
               onClick={nextChapter}
               disabled={currentIndex >= chapters.length - 1}
-              className="rounded-lg border border-[#1B5E20]/30 px-3 py-2 text-sm font-semibold text-[#1B5E20] disabled:opacity-50"
+              className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
             >
               الفصل التالي
             </button>
@@ -316,6 +398,8 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
         onClose={() => setSettingsOpen(false)}
         onUpdate={updatePreference}
       />
+
+      <TutorialPopup open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
     </section>
   )
 }

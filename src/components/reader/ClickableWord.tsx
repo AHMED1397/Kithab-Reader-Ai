@@ -1,14 +1,17 @@
-﻿interface ClickableWordProps {
+interface ClickableWordProps {
   word: string
+  isPending?: boolean
   onClick: (word: string) => void
 }
 
-export default function ClickableWord({ word, onClick }: ClickableWordProps) {
+export default function ClickableWord({ word, isPending, onClick }: ClickableWordProps) {
   return (
     <button
       type="button"
       onClick={() => onClick(word)}
-      className="inline rounded px-1 py-0.5 text-right transition hover:bg-[#F9A825]/25"
+      className={`inline rounded px-1 py-0.5 text-right transition hover:bg-[#F9A825]/25 ${
+        isPending ? 'bg-[#F9A825]/40 ring-2 ring-[#F9A825]/60' : ''
+      }`}
     >
       {word}
     </button>

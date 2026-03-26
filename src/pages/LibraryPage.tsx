@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import BookFilter from '../components/library/BookFilter'
 import Bookshelf from '../components/library/Bookshelf'
 import SearchBar from '../components/library/SearchBar'
@@ -73,29 +73,31 @@ export default function LibraryPage() {
 
   return (
     <section className="space-y-4">
-      <header className="rounded-3xl bg-[linear-gradient(130deg,#1B5E20,#245f2e,#8D6E63)] p-6 text-[#FDF6E3] shadow">
-        <h1 className="font-['Amiri'] text-5xl font-bold">المكتبة الذكية</h1>
-        <p className="text-lg text-[#F9E3B0]">اقرأ، تعلم، واحفظ المفردات</p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl bg-white/15 p-3">إجمالي الكتب: {stats.totalKitabs}</div>
-          <div className="rounded-xl bg-white/15 p-3">المفردات المحفوظة: {stats.totalVocab}</div>
-          <div className="rounded-xl bg-white/15 p-3">قيد القراءة: {stats.booksInProgress}</div>
-          <div className="rounded-xl bg-white/15 p-3">المواظبة: {stats.streak} يوم</div>
+      <header className="rounded-3xl bg-[linear-gradient(130deg,#1B5E20,#245f2e,#8D6E63)] p-4 sm:p-6 text-[#FDF6E3] shadow">
+        <h1 className="font-['Amiri'] text-3xl sm:text-5xl font-bold">المكتبة الذكية</h1>
+        <p className="text-base sm:text-lg text-[#F9E3B0]">اقرأ، تعلم، واحفظ المفردات</p>
+        <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4 text-xs sm:text-sm">
+          <div className="rounded-xl bg-white/15 p-2 sm:p-3">إجمالي الكتب: {stats.totalKitabs}</div>
+          <div className="rounded-xl bg-white/15 p-2 sm:p-3">المفردات المحفوظة: {stats.totalVocab}</div>
+          <div className="rounded-xl bg-white/15 p-2 sm:p-3">قيد القراءة: {stats.booksInProgress}</div>
+          <div className="rounded-xl bg-white/15 p-2 sm:p-3">المواظبة: {stats.streak} يوم</div>
         </div>
       </header>
 
       <SearchBar value={search} onChange={setSearch} />
 
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        <BookFilter
-          category={category}
-          level={level}
-          sortBy={sortBy}
-          onCategoryChange={setCategory}
-          onLevelChange={setLevel}
-          onSortChange={setSortBy}
-        />
-        <Bookshelf kitabs={filteredKitabs} progressMap={progressMap} />
+        <div className="lg:block">
+          <BookFilter
+            category={category}
+            level={level}
+            sortBy={sortBy}
+            onCategoryChange={setCategory}
+            onLevelChange={setLevel}
+            onSortChange={setSortBy}
+          />
+        </div>
+        <Bookshelf kitabs={filteredKitabs} />
       </div>
     </section>
   )
