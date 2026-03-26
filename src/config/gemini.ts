@@ -1,5 +1,5 @@
 ﻿const GEMINI_API_KEY_RAW = import.meta.env.VITE_GEMINI_API_KEY || ''
-const GEMINI_API_KEYS = GEMINI_API_KEY_RAW.split(',').map(k => k.trim()).filter(Boolean)
+const GEMINI_API_KEYS = GEMINI_API_KEY_RAW.split(',').map((k: string) => k.trim()).filter(Boolean)
 const GEMINI_MODEL = 'gemini-2.5-flash'
 const GEMINI_BASE_URLS = [
   'https://generativelanguage.googleapis.com/v1beta',

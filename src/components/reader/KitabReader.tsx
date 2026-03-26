@@ -228,11 +228,11 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
 
   const parsedData = useMemo(() => {
     if (!currentChapter) return { words: [], paragraphs: [] }
-    const paragraphs = currentChapter.content.split(/\n\n+|\n/).filter(Boolean)
+    const paragraphs = currentChapter.content.split(/\n\n+|\n/).filter((b: string) => Boolean(b))
     const allWords: string[] = []
-    const paraData = paragraphs.map(para => {
-      const paraWords = para.split(/\s+/).filter(Boolean)
-      const data = paraWords.map(w => {
+    const paraData = paragraphs.map((para: string) => {
+      const paraWords = para.split(/\s+/).filter((b: string) => Boolean(b))
+      const data = paraWords.map((w: string) => {
         const item = { word: w, globalIndex: allWords.length }
         allWords.push(w)
         return item
