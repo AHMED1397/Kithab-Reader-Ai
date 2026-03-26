@@ -78,79 +78,96 @@ async function callGemini(prompt: string) {
   }
 
   const retriableStatuses = new Set([429, 500, 502, 503, 504])
-  const maxAttemptsPerEndpoint = 3
+  const maxAttemptsPerKey = 2
+  const maxKeysToTry = Math.min(geminiConfig.apiKeys.length, 5)
   let lastError = 'GEMINI_UNAVAILABLE'
 
-  for (const endpoint of geminiConfig.endpoints) {
-    for (let attempt = 1; attempt <= maxAttemptsPerEndpoint; attempt += 1) {
-      let response: Response
+  for (let keyAttempt = 0; keyAttempt < maxKeysToTry; keyAttempt++) {
+    const currentApiKey = geminiConfig.getCurrentApiKey()
+    
+    for (const endpoint of geminiConfig.endpoints) {
+      for (let attempt = 1; attempt <= maxAttemptsPerKey; attempt += 1) {
+        let response: Response
 
-      try {
-        response = await fetch(`${endpoint}?key=${geminiConfig.apiKey}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: prompt }],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.2,
-              maxOutputTokens: 900,
+        try {
+          response = await fetch(`${endpoint}?key=${currentApiKey}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
             },
-          }),
-        })
-      } catch {
-        lastError = navigator.onLine ? 'GEMINI_NETWORK' : 'OFFLINE_GEMINI'
-        if (attempt < maxAttemptsPerEndpoint) {
-          await sleep(700 * attempt)
-          continue
-        }
-        break
-      }
-
-      if (!response.ok) {
-        const errorPayload = await readGeminiError(response)
-
-        if (response.status === 404 || errorPayload?.status === 'NOT_FOUND') {
-          lastError = 'GEMINI_NOT_FOUND'
-          break
-        }
-
-        if (retriableStatuses.has(response.status)) {
-          lastError = response.status === 429 ? 'GEMINI_RATE_LIMIT' : 'GEMINI_UNAVAILABLE'
-          if (attempt < maxAttemptsPerEndpoint) {
-            await sleep(800 * attempt)
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [{ text: prompt }],
+                },
+              ],
+              generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 900,
+              },
+            }),
+          })
+        } catch {
+          lastError = navigator.onLine ? 'GEMINI_NETWORK' : 'OFFLINE_GEMINI'
+          if (attempt < maxAttemptsPerKey) {
+            await sleep(500 * attempt)
             continue
           }
           break
         }
 
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('GEMINI_AUTH_ERROR')
+        if (!response.ok) {
+          const errorPayload = await readGeminiError(response)
+
+          if (response.status === 404 || errorPayload?.status === 'NOT_FOUND') {
+            lastError = 'GEMINI_NOT_FOUND'
+            break
+          }
+
+          if (retriableStatuses.has(response.status)) {
+            lastError = response.status === 429 ? 'GEMINI_RATE_LIMIT' : 'GEMINI_UNAVAILABLE'
+            
+            if (response.status === 429) {
+               // If we hit a rate limit, rotate to the next key and break to the outer loop
+               geminiConfig.rotateKey()
+               break
+            }
+
+            if (attempt < maxAttemptsPerKey) {
+              await sleep(600 * attempt)
+              continue
+            }
+            break
+          }
+
+          if (response.status === 401 || response.status === 403) {
+            // Invalid key, rotate and try another
+            geminiConfig.rotateKey()
+            break
+          }
+
+          throw new Error(`GEMINI_HTTP_${response.status}`)
         }
 
-        throw new Error(`GEMINI_HTTP_${response.status}`)
-      }
-
-      const payload = (await response.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-      }
-
-      const output = payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
-
-      if (!output) {
-        if (attempt < maxAttemptsPerEndpoint) {
-          await sleep(500 * attempt)
-          continue
+        const payload = (await response.json()) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
         }
-        throw new Error('GEMINI_EMPTY')
-      }
 
-      return output
+        const output = payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+
+        if (!output) {
+          if (attempt < maxAttemptsPerKey) {
+            await sleep(400 * attempt)
+            continue
+          }
+          throw new Error('GEMINI_EMPTY')
+        }
+
+        return output
+      }
+      
+      // If we've hit a break because of a 429 or auth error, skip other endpoints for this key
+      if (lastError === 'GEMINI_RATE_LIMIT') break
     }
   }
 

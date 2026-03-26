@@ -167,6 +167,12 @@ export async function updateKitabMetadata(kitabId: string, payload: Partial<Upda
   localStorage.removeItem(`kitab-cache:${kitabId}`)
 }
 
+export async function updateChapterContent(kitabId: string, chapterId: string, content: string) {
+  const chapterRef = doc(db, 'kitabs', kitabId, 'chapters', chapterId)
+  await updateDoc(chapterRef, { content })
+  localStorage.removeItem(`kitab-cache:${kitabId}`)
+}
+
 export async function deleteKitab(kitabId: string) {
   const chaptersRef = collection(db, 'kitabs', kitabId, 'chapters')
   const chapterSnapshot = await getDocs(chaptersRef)

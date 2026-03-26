@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import toast from 'react-hot-toast'
 import useAuth from '../../hooks/useAuth'
 import useReaderPreferences from '../../hooks/useReaderPreferences'
 import useReadingProgress from '../../hooks/useReadingProgress'
+import { updateChapterContent } from '../../services/kitabService'
 import type { KitabChapter, KitabDoc } from '../../types/kitab'
 import SentenceExplainer from '../vocab/SentenceExplainer'
 import VocabPopup from '../vocab/VocabPopup'
@@ -48,6 +50,9 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   const persistTimerRef = useRef<number | null>(null)
 
   const [tocOpen, setTocOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editContent, setEditContent] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
 
   const { preferences, themeStyles, updatePreference } = useReaderPreferences(
     user?.uid,
@@ -113,6 +118,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     setPendingSelectionIndex(null)
     restoredChapterRef.current = ''
     setTocOpen(false) // Close TOC on mobile when chapter changes
+    setIsEditing(false)
   }, [currentChapterId])
 
   useEffect(() => {
@@ -143,6 +149,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   }
 
   const onTextMouseUp = () => {
+    if (isEditing) return
     const nativeSelection = window.getSelection()
     const selectedText = nativeSelection?.toString().trim() ?? ''
 
@@ -190,6 +197,31 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     setCurrentChapterId(chapters[currentIndex - 1].id)
   }
 
+  const handleEditToggle = () => {
+    if (!isEditing) {
+      setEditContent(currentChapter.content)
+    }
+    setIsEditing(!isEditing)
+  }
+
+  const handleSave = async () => {
+    try {
+      setIsSaving(true)
+      await updateChapterContent(kitab.id, currentChapter.id, editContent)
+      toast.success('تم حفظ التعديلات بنجاح')
+      setIsEditing(false)
+      // We don't need to manually update chapters state because it's usually managed by the parent
+      // but if the parent doesn't re-fetch, we might need a way to refresh it.
+      // Since getKitabWithChapters caches, we cleared it in the service.
+      // To force a refresh in the UI, we might need to tell the user to refresh or use a reload.
+      window.location.reload()
+    } catch {
+      toast.error('تعذر حفظ التعديلات')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   if (!currentChapter) {
     return <p className="rounded-xl bg-white p-4">لا توجد فصول متاحة.</p>
   }
@@ -211,6 +243,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   }, [currentChapter])
 
   const handleWordClick = (index: number) => {
+    if (isEditing) return
     if (pendingSelectionIndex === null) {
       setPendingSelectionIndex(index)
     } else if (pendingSelectionIndex === index) {
@@ -233,6 +266,8 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     }
   }
 
+  const isAdmin = profile?.role === 'admin'
+
   return (
     <section className="space-y-3">
 
@@ -243,6 +278,19 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={handleEditToggle}
+              className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                isEditing
+                  ? 'border-red-400 bg-red-50 text-red-600'
+                  : 'border-[#1B5E20]/30 text-[#1B5E20] hover:bg-[#1B5E20]/5'
+              }`}
+            >
+              {isEditing ? 'إلغاء التعديل' : 'تعديل النص'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setTocOpen(true)}
@@ -303,7 +351,19 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
         )}
 
         <article className="space-y-3 rounded-2xl border border-[#1B5E20]/20 bg-[#FDF6E3] p-4 shadow-sm md:p-6">
-          <h2 className="font-['Amiri'] text-2xl font-bold text-[#1B5E20] sm:text-3xl">{currentChapter.title}</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-['Amiri'] text-2xl font-bold text-[#1B5E20] sm:text-3xl">{currentChapter.title}</h2>
+            {isEditing && (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving}
+                className="rounded-lg bg-[#1B5E20] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#174E1B] disabled:opacity-50"
+              >
+                {isSaving ? 'جاري الحفظ...' : 'حفظ التغييرات'}
+              </button>
+            )}
+          </div>
 
           <div
             ref={contentRef}
@@ -319,40 +379,58 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
               fontFamily: preferences.fontFamily,
             }}
           >
-            {parsedData.paragraphs.map((paraWords, pIndex) => (
-              <p key={`p-${pIndex}`} className="mb-4 text-right leading-[inherit]">
-                {paraWords.map(({ word, globalIndex }) => (
-                  <span key={`${word}-${globalIndex}`} className="inline-block">
-                    <ClickableWord
-                      word={word}
-                      isPending={pendingSelectionIndex === globalIndex}
-                      onClick={() => handleWordClick(globalIndex)}
-                    />{' '}
-                  </span>
-                ))}
-              </p>
-            ))}
+            {isEditing ? (
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="min-h-[500px] w-full bg-transparent p-2 outline-none"
+                style={{
+                  direction: 'rtl',
+                  fontFamily: 'inherit',
+                  fontSize: 'inherit',
+                  lineHeight: 'inherit',
+                }}
+                spellCheck={false}
+                placeholder="أدخل النص هنا... استخدم **كلمة** لجعل الكلمة عريضة"
+              />
+            ) : (
+              parsedData.paragraphs.map((paraWords, pIndex) => (
+                <p key={`p-${pIndex}`} className="mb-4 text-right leading-[inherit]">
+                  {paraWords.map(({ word, globalIndex }) => (
+                    <span key={`${word}-${globalIndex}`} className="inline-block">
+                      <ClickableWord
+                        word={word}
+                        isPending={pendingSelectionIndex === globalIndex}
+                        onClick={() => handleWordClick(globalIndex)}
+                      />{' '}
+                    </span>
+                  ))}
+                </p>
+              ))
+            )}
           </div>
 
-          <div className="flex justify-between gap-4">
-            <button
-              type="button"
-              onClick={previousChapter}
-              disabled={currentIndex === 0}
-              className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
-            >
-              الفصل السابق
-            </button>
+          {!isEditing && (
+            <div className="flex justify-between gap-4">
+              <button
+                type="button"
+                onClick={previousChapter}
+                disabled={currentIndex === 0}
+                className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
+              >
+                الفصل السابق
+              </button>
 
-            <button
-              type="button"
-              onClick={nextChapter}
-              disabled={currentIndex >= chapters.length - 1}
-              className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
-            >
-              الفصل التالي
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={nextChapter}
+                disabled={currentIndex >= chapters.length - 1}
+                className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
+              >
+                الفصل التالي
+              </button>
+            </div>
+          )}
         </article>
       </div>
 
