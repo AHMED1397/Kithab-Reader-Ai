@@ -1,0 +1,59 @@
+﻿@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;500;700&family=Scheherazade+New:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Cairo', 'Noto Naskh Arabic', 'Amiri', serif;
+  color: #10212f;
+  background-color: #f8f4ec;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  direction: rtl;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(15, 76, 92, 0.14), transparent 32%),
+    radial-gradient(circle at 82% 14%, rgba(244, 162, 97, 0.13), transparent 28%),
+    radial-gradient(circle at 48% 72%, rgba(15, 76, 92, 0.08), transparent 30%),
+    #f8f4ec;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 260ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up {
+    animation: none;
+  }
+}
+
+input,
+button,
+textarea,
+select {
+  font-family: inherit;
+}
