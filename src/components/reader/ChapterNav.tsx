@@ -1,8 +1,8 @@
-﻿import { useEffect, useMemo, useState } from 'react'
-import type { KitabChapter } from '../../types/kitab'
+import { useEffect, useMemo, useState } from 'react'
+import type { ChapterMetadata } from '../../types/kitab'
 
 interface ChapterNavProps {
-  chapters: KitabChapter[]
+  chapters: ChapterMetadata[]
   currentChapterId: string
   collapsed: boolean
   onToggle: () => void
@@ -16,7 +16,7 @@ interface TocNode {
   children: TocNode[]
 }
 
-function buildTocTree(chapters: KitabChapter[]) {
+function buildTocTree(chapters: ChapterMetadata[]) {
   const root: TocNode[] = []
 
   for (const chapter of chapters) {

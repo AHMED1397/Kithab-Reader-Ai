@@ -1,13 +1,13 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import KitabReader from '../components/reader/KitabReader'
-import { getKitabWithChapters } from '../services/kitabService'
-import type { KitabChapter, KitabDoc } from '../types/kitab'
+import { getChaptersMetadata, getKitabMetadata } from '../services/kitabService'
+import type { ChapterMetadata, KitabDoc } from '../types/kitab'
 
 export default function ReaderPage() {
   const { kitabId } = useParams()
   const [kitab, setKitab] = useState<KitabDoc | null>(null)
-  const [chapters, setChapters] = useState<KitabChapter[]>([])
+  const [chaptersMetadata, setChaptersMetadata] = useState<ChapterMetadata[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -23,13 +23,17 @@ export default function ReaderPage() {
     const run = async () => {
       try {
         setLoading(true)
-        const payload = await getKitabWithChapters(kitabId)
+        const [kitabData, chaptersData] = await Promise.all([
+          getKitabMetadata(kitabId),
+          getChaptersMetadata(kitabId),
+        ])
+
         if (!active) {
           return
         }
 
-        setKitab(payload.kitab)
-        setChapters(payload.chapters)
+        setKitab(kitabData)
+        setChaptersMetadata(chaptersData)
         setError('')
       } catch {
         if (!active) {
@@ -59,5 +63,5 @@ export default function ReaderPage() {
     return <p className="rounded-xl bg-red-50 p-4 text-center text-red-700">{error || 'الكتاب غير موجود'}</p>
   }
 
-  return <KitabReader kitab={kitab} chapters={chapters} />
+  return <KitabReader kitab={kitab} chaptersMetadata={chaptersMetadata} />
 }

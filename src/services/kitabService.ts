@@ -1,4 +1,4 @@
-﻿import {
+import {
   collection,
   deleteDoc,
   doc,
@@ -13,7 +13,7 @@
   type Unsubscribe,
 } from 'firebase/firestore'
 import { db } from '../config/firebase'
-import type { KitabChapter, KitabDoc, KitabInput, ReadingProgress } from '../types/kitab'
+import type { ChapterMetadata, KitabChapter, KitabDoc, KitabInput, ReadingProgress } from '../types/kitab'
 
 function mapKitabDoc(id: string, data: Record<string, unknown>): KitabDoc {
   return {
@@ -46,6 +46,36 @@ export function subscribeToKitabs(onChange: (kitabs: KitabDoc[]) => void): Unsub
   })
 }
 
+export async function getKitabMetadata(kitabId: string): Promise<KitabDoc> {
+  const kitabSnap = await getDoc(doc(db, 'kitabs', kitabId))
+  if (!kitabSnap.exists()) {
+    throw new Error('الكتاب غير موجود')
+  }
+  return mapKitabDoc(kitabSnap.id, kitabSnap.data())
+}
+
+export async function getChaptersMetadata(kitabId: string): Promise<ChapterMetadata[]> {
+  const chaptersSnap = await getDocs(query(collection(db, 'kitabs', kitabId, 'chapters'), orderBy('order')))
+  return chaptersSnap.docs.map((chapter) => ({
+    id: chapter.id,
+    title: String(chapter.data().title ?? ''),
+    order: Number(chapter.data().order ?? 0),
+    nodeType: typeof chapter.data().nodeType === 'string' ? chapter.data().nodeType : undefined,
+    depth: Number(chapter.data().depth ?? 0),
+    path: Array.isArray(chapter.data().path)
+      ? chapter.data().path.filter((item: unknown): item is string => typeof item === 'string')
+      : undefined,
+  }))
+}
+
+export async function getChapterContent(kitabId: string, chapterId: string): Promise<string> {
+  const chapterSnap = await getDoc(doc(db, 'kitabs', kitabId, 'chapters', chapterId))
+  if (!chapterSnap.exists()) {
+    throw new Error('الفصل غير موجود')
+  }
+  return String(chapterSnap.data().content ?? '')
+}
+
 export async function getKitabWithChapters(kitabId: string) {
   const cached = localStorage.getItem(`kitab-cache:${kitabId}`)
   if (cached) {
@@ -56,27 +86,22 @@ export async function getKitabWithChapters(kitabId: string) {
     }
   }
 
-  const kitabSnap = await getDoc(doc(db, 'kitabs', kitabId))
-  if (!kitabSnap.exists()) {
-    throw new Error('الكتاب غير موجود')
-  }
-
+  const kitab = await getKitabMetadata(kitabId)
   const chaptersSnap = await getDocs(query(collection(db, 'kitabs', kitabId, 'chapters'), orderBy('order')))
 
-  const payload = {
-    kitab: mapKitabDoc(kitabSnap.id, kitabSnap.data()),
-    chapters: chaptersSnap.docs.map((chapter) => ({
-      id: chapter.id,
-      title: String(chapter.data().title ?? ''),
-      content: String(chapter.data().content ?? ''),
-      order: Number(chapter.data().order ?? 0),
-      nodeType: typeof chapter.data().nodeType === 'string' ? chapter.data().nodeType : undefined,
-      depth: Number(chapter.data().depth ?? 0),
-      path: Array.isArray(chapter.data().path)
-        ? chapter.data().path.filter((item: unknown): item is string => typeof item === 'string')
-        : undefined,
-    })),
-  }
+  const chapters: KitabChapter[] = chaptersSnap.docs.map((chapter) => ({
+    id: chapter.id,
+    title: String(chapter.data().title ?? ''),
+    content: String(chapter.data().content ?? ''),
+    order: Number(chapter.data().order ?? 0),
+    nodeType: typeof chapter.data().nodeType === 'string' ? chapter.data().nodeType : undefined,
+    depth: Number(chapter.data().depth ?? 0),
+    path: Array.isArray(chapter.data().path)
+      ? chapter.data().path.filter((item: unknown): item is string => typeof item === 'string')
+      : undefined,
+  }))
+
+  const payload = { kitab, chapters }
 
   localStorage.setItem(`kitab-cache:${kitabId}`, JSON.stringify(payload))
   return payload

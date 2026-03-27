@@ -1,6 +1,7 @@
 ﻿import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from '../config/firebase'
 import { assertGeminiReady, geminiConfig } from '../config/gemini'
+import { translateWithMyMemory } from './myMemoryService'
 import type { SentenceExplanation, WordAnalysis } from '../types/gemini'
 
 function normalizeArabic(text: string) {
@@ -82,9 +83,9 @@ async function callGemini(prompt: string) {
   const maxKeysToTry = Math.min(geminiConfig.apiKeys.length, 5)
   let lastError = 'GEMINI_UNAVAILABLE'
 
-  for (let keyAttempt = 0; keyAttempt < maxKeysToTry; keyAttempt++) {
+  for (let keyAttempt = 0; keyAttempt < maxKeysToTry; keyAttempt += 1) {
     const currentApiKey = geminiConfig.getCurrentApiKey()
-    
+
     for (const endpoint of geminiConfig.endpoints) {
       for (let attempt = 1; attempt <= maxAttemptsPerKey; attempt += 1) {
         let response: Response
@@ -96,11 +97,7 @@ async function callGemini(prompt: string) {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              contents: [
-                {
-                  parts: [{ text: prompt }],
-                },
-              ],
+              contents: [{ parts: [{ text: prompt }] }],
               generationConfig: {
                 temperature: 0.2,
                 maxOutputTokens: 900,
@@ -126,11 +123,10 @@ async function callGemini(prompt: string) {
 
           if (retriableStatuses.has(response.status)) {
             lastError = response.status === 429 ? 'GEMINI_RATE_LIMIT' : 'GEMINI_UNAVAILABLE'
-            
+
             if (response.status === 429) {
-               // If we hit a rate limit, rotate to the next key and break to the outer loop
-               geminiConfig.rotateKey()
-               break
+              geminiConfig.rotateKey()
+              break
             }
 
             if (attempt < maxAttemptsPerKey) {
@@ -141,7 +137,6 @@ async function callGemini(prompt: string) {
           }
 
           if (response.status === 401 || response.status === 403) {
-            // Invalid key, rotate and try another
             geminiConfig.rotateKey()
             break
           }
@@ -154,7 +149,6 @@ async function callGemini(prompt: string) {
         }
 
         const output = payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
-
         if (!output) {
           if (attempt < maxAttemptsPerKey) {
             await sleep(400 * attempt)
@@ -163,11 +157,13 @@ async function callGemini(prompt: string) {
           throw new Error('GEMINI_EMPTY')
         }
 
+        console.log('Gemini raw output:', output)
         return output
       }
-      
-      // If we've hit a break because of a 429 or auth error, skip other endpoints for this key
-      if (lastError === 'GEMINI_RATE_LIMIT') break
+
+      if (lastError === 'GEMINI_RATE_LIMIT') {
+        break
+      }
     }
   }
 
@@ -176,13 +172,12 @@ async function callGemini(prompt: string) {
 
 function parseLine(source: string, labels: string[]) {
   for (const label of labels) {
-    const regex = new RegExp(`${label}\\s*:\\s*(.+)`, 'i')
+    const regex = new RegExp(`(?:${label})\\s*[:=؛-]?\\s*(.+)`, 'i')
     const match = source.match(regex)
     if (match?.[1]?.trim()) {
-      return match[1].trim()
+      return match[1].trim().replace(/^["'](.*)["']$/, '$1')
     }
   }
-
   return ''
 }
 
@@ -201,58 +196,129 @@ function extractJsonBlock(rawText: string) {
   }
 }
 
+function extractFieldFromRawJsonLike(rawText: string, fieldName: string) {
+  const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const stringValueRegex = new RegExp(`"${escapedField}"\\s*:\\s*"([\\s\\S]*?)(?:"\\s*,|"$)`, 'i')
+  const stringValueMatch = rawText.match(stringValueRegex)
+  if (stringValueMatch?.[1]) {
+    return stringValueMatch[1].replace(/\\"/g, '"').trim()
+  }
+
+  const bareValueRegex = new RegExp(`"${escapedField}"\\s*:\\s*([^,}\\n]+)`, 'i')
+  const bareValueMatch = rawText.match(bareValueRegex)
+  if (bareValueMatch?.[1]) {
+    return bareValueMatch[1].replace(/^["']|["']$/g, '').trim()
+  }
+
+  return ''
+}
+
+function isUnavailableValue(value: string) {
+  const normalized = value.trim().toLowerCase()
+  return (
+    !normalized ||
+    normalized === 'غير متوفر' ||
+    normalized === 'not available' ||
+    normalized === 'கிடைக்கவில்லை'
+  )
+}
+
+function hasTamilScript(value: string) {
+  return /[\u0B80-\u0BFF]/.test(value)
+}
+
+function looksLikeEnglish(value: string) {
+  return /[A-Za-z]/.test(value)
+}
+
+function hasUsefulAnalysis(value: WordAnalysis) {
+  return (
+    !isUnavailableValue(value.meaningAr) ||
+    !isUnavailableValue(value.meaningTa) ||
+    !isUnavailableValue(value.meaningEn)
+  )
+}
+
+function needsTranslationBackfill(value: WordAnalysis) {
+  const taMissingOrWrong = isUnavailableValue(value.meaningTa) || (!hasTamilScript(value.meaningTa) && looksLikeEnglish(value.meaningTa))
+  return !isUnavailableValue(value.meaningAr) && (taMissingOrWrong || isUnavailableValue(value.meaningEn))
+}
+
 function parseWordAnalysis(rawText: string): WordAnalysis {
   const json = extractJsonBlock(rawText)
 
+  let ar = ''
+  let ta = ''
+  let en = ''
+
   if (json) {
-    return {
-      meaningAr: String(json.meaningAr ?? json.ar ?? json.arabic ?? 'غير متوفر'),
-      meaningTa: String(json.meaningTa ?? json.ta ?? json.tamil ?? 'கிடைக்கவில்லை'),
-      meaningEn: String(json.meaningEn ?? json.en ?? json.english ?? 'Not available'),
-    }
+    ar = String(json.meaningAr ?? json.ar ?? json.arabic ?? json.Arabic ?? json['المعنى'] ?? json['المعنى بالعربية'] ?? '')
+    ta = String(json.meaningTa ?? json.ta ?? json.tamil ?? json.Tamil ?? json['المعنى بالتاميلية'] ?? json['அர்த்தம்'] ?? '')
+    en = String(json.meaningEn ?? json.en ?? json.english ?? json.English ?? json['Meaning (English)'] ?? json.Meaning ?? '')
   }
 
+  if (!ar) ar = extractFieldFromRawJsonLike(rawText, 'meaningAr')
+  if (!ta) ta = extractFieldFromRawJsonLike(rawText, 'meaningTa')
+  if (!en) en = extractFieldFromRawJsonLike(rawText, 'meaningEn')
+
+  if (!ar) ar = parseLine(rawText, ['meaningAr', 'ar', 'arabic', 'المعنى بالعربية', 'Arabic Meaning', 'المعنى', 'عربي'])
+  if (!ta) ta = parseLine(rawText, ['meaningTa', 'ta', 'tamil', 'المعنى بالتاميلية', 'Tamil Meaning', 'அர்த்தம்', 'تاميل'])
+  if (!en) en = parseLine(rawText, ['meaningEn', 'en', 'english', 'Meaning \\(English\\)', 'English Meaning', 'Meaning', 'إنجليزي'])
+
   return {
-    meaningAr: parseLine(rawText, ['المعنى بالعربية', 'Arabic Meaning', 'المعنى']) || 'غير متوفر',
-    meaningTa: parseLine(rawText, ['المعنى بالتاميلية', 'Tamil Meaning']) || 'கிடைக்கவில்லை',
-    meaningEn: parseLine(rawText, ['Meaning (English)', 'English Meaning']) || 'Not available',
+    meaningAr: ar || 'غير متوفر',
+    meaningTa: ta || 'கிடைக்கவில்லை',
+    meaningEn: en || 'Not available',
   }
 }
 
-function parseSentenceExplanation(rawText: string): SentenceExplanation {
-  const json = extractJsonBlock(rawText)
+async function fillMissingTranslations(analysis: WordAnalysis, sourceOverride?: string): Promise<WordAnalysis> {
+  const next = { ...analysis }
+  const sourceText = sourceOverride?.trim() || (!isUnavailableValue(next.meaningAr) ? next.meaningAr : '')
+  if (!sourceText) {
+    return next
+  }
 
-  if (json) {
-    return {
-      summary: String(json.summary ?? 'غير متوفر'),
-      grammar: String(json.grammar ?? 'غير متوفر'),
-      difficultTerms: String(json.difficultTerms ?? 'غير متوفر'),
-      benefit: String(json.benefit ?? 'غير متوفر'),
-      meaningAr: String(json.meaningAr ?? 'غير متوفر'),
-      meaningTa: String(json.meaningTa ?? 'கிடைக்கவில்லை'),
-      meaningEn: String(json.meaningEn ?? 'Not available'),
-      fullText: rawText,
+  if (isUnavailableValue(next.meaningTa) || (!hasTamilScript(next.meaningTa) && looksLikeEnglish(next.meaningTa))) {
+    const ta = await translateWithMyMemory(sourceText, 'ta')
+    if (ta && ta.toLowerCase() !== sourceText.toLowerCase()) {
+      next.meaningTa = ta
     }
   }
 
-  return {
-    summary:
-      parseLine(rawText, ['١\\. المعنى الإجمالي للجملة', '1\\. المعنى الإجمالي للجملة']) ||
-      'غير متوفر',
-    grammar:
-      parseLine(rawText, ['٢\\. إعراب الكلمات الرئيسية', '2\\. إعراب الكلمات الرئيسية']) ||
-      'غير متوفر',
-    difficultTerms:
-      parseLine(rawText, ['٣\\. شرح أي مصطلحات صعبة', '3\\. شرح أي مصطلحات صعبة']) ||
-      'غير متوفر',
-    benefit:
-      parseLine(rawText, ['٤\\. الفائدة أو القاعدة المستخرجة إن وُجدت', '4\\. الفائدة أو القاعدة المستخرجة إن وُجدت']) ||
-      'غير متوفر',
-    meaningAr: parseLine(rawText, ['المعنى بالعربية', 'معنى الجملة بالعربية']) || 'غير متوفر',
-    meaningTa: parseLine(rawText, ['المعنى بالتاميلية', 'Tamil Translation']) || 'கிடைக்கவில்லை',
-    meaningEn: parseLine(rawText, ['Meaning (English)', 'English Translation']) || 'Not available',
-    fullText: rawText,
+  if (isUnavailableValue(next.meaningEn)) {
+    const en = await translateWithMyMemory(sourceText, 'en')
+    if (en && en.toLowerCase() !== sourceText.toLowerCase()) {
+      next.meaningEn = en
+    }
   }
+
+  return next
+}
+
+async function applyLiteralSentenceTranslations(
+  analysis: WordAnalysis,
+  sentence: string,
+): Promise<WordAnalysis> {
+  const next = { ...analysis }
+  const sourceSentence = sentence.trim()
+  if (!sourceSentence) {
+    return next
+  }
+
+  const [ta, en] = await Promise.all([
+    translateWithMyMemory(sourceSentence, 'ta'),
+    translateWithMyMemory(sourceSentence, 'en'),
+  ])
+
+  if (ta && ta.toLowerCase() !== sourceSentence.toLowerCase()) {
+    next.meaningTa = ta
+  }
+  if (en && en.toLowerCase() !== sourceSentence.toLowerCase()) {
+    next.meaningEn = en
+  }
+
+  return next
 }
 
 export async function analyzeWordWithGemini(clickedWord: string, surroundingText: string) {
@@ -261,11 +327,26 @@ export async function analyzeWordWithGemini(clickedWord: string, surroundingText
   const cached = localStorage.getItem(cacheKey)
 
   if (cached) {
-    return JSON.parse(cached) as WordAnalysis
+    const parsed = JSON.parse(cached) as WordAnalysis
+    if (needsTranslationBackfill(parsed)) {
+      const fixed = await fillMissingTranslations(parsed)
+      localStorage.setItem(cacheKey, JSON.stringify(fixed))
+      await saveSharedWordAnalysis(clickedWord, fixed)
+      return fixed
+    }
+    if (hasUsefulAnalysis(parsed)) {
+      return parsed
+    }
   }
 
   const sharedCached = await getSharedWordAnalysis(clickedWord)
-  if (sharedCached) {
+  if (sharedCached && needsTranslationBackfill(sharedCached)) {
+    const fixed = await fillMissingTranslations(sharedCached)
+    localStorage.setItem(cacheKey, JSON.stringify(fixed))
+    await saveSharedWordAnalysis(clickedWord, fixed)
+    return fixed
+  }
+  if (sharedCached && hasUsefulAnalysis(sharedCached)) {
     localStorage.setItem(cacheKey, JSON.stringify(sharedCached))
     return sharedCached
   }
@@ -273,7 +354,7 @@ export async function analyzeWordWithGemini(clickedWord: string, surroundingText
   const prompt = `أنت معجم عربي ذكي. أعد فقط JSON دون أي نص إضافي بالهيئة التالية:\n{ "meaningAr": "...", "meaningTa": "...", "meaningEn": "..." }\n\nالكلمة: "${clickedWord}"\nالسياق: "${surroundingText}"`
 
   const raw = await callGemini(prompt)
-  const parsed = parseWordAnalysis(raw)
+  const parsed = await fillMissingTranslations(parseWordAnalysis(raw))
 
   await saveSharedWordAnalysis(clickedWord, parsed)
   localStorage.setItem(cacheKey, JSON.stringify(parsed))
@@ -289,13 +370,23 @@ export async function explainSentenceWithGemini(
   const cached = localStorage.getItem(cacheKey)
 
   if (cached) {
-    return JSON.parse(cached) as SentenceExplanation
+    const parsed = JSON.parse(cached) as SentenceExplanation
+    if (needsTranslationBackfill(parsed)) {
+      const filled = await fillMissingTranslations(parsed, sentence)
+      const fixed = (await applyLiteralSentenceTranslations(filled, sentence)) as SentenceExplanation
+      localStorage.setItem(cacheKey, JSON.stringify(fixed))
+      return fixed
+    }
+    if (hasUsefulAnalysis(parsed)) {
+      return parsed
+    }
   }
 
-  const prompt = `أنت أستاذ لغة عربية متخصص. أعد فقط JSON دون أي نص إضافي بالهيئة التالية:\n{ "summary": "...", "grammar": "...", "difficultTerms": "...", "benefit": "...", "meaningAr": "...", "meaningTa": "...", "meaningEn": "..." }\n\nالجملة: "${sentence}"\nالمصدر: كتاب "${kitabTitle}" - ${chapterTitle}`
+  const prompt = `أنت مترجم عربي دقيق. أعد فقط JSON دون أي نص إضافي بالهيئة التالية:\n{ "meaningAr": "...", "meaningTa": "...", "meaningEn": "..." }\n\nالمطلوب:\n1) meaningAr: إعادة صياغة عربية قصيرة للجملة نفسها دون شرح مطوّل.\n2) meaningTa: ترجمة تاميلية مباشرة للجملة نفسها.\n3) meaningEn: ترجمة إنجليزية مباشرة للجملة نفسها.\n\nالجملة: "${sentence}"\nالمصدر: كتاب "${kitabTitle}" - ${chapterTitle}`
 
   const raw = await callGemini(prompt)
-  const parsed = parseSentenceExplanation(raw)
+  const filled = await fillMissingTranslations(parseWordAnalysis(raw), sentence)
+  const parsed = (await applyLiteralSentenceTranslations(filled, sentence)) as SentenceExplanation
 
   localStorage.setItem(cacheKey, JSON.stringify(parsed))
   return parsed

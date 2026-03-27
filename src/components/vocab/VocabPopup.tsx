@@ -7,6 +7,7 @@ import usePons from '../../hooks/usePons'
 import useVocabulary from '../../hooks/useVocabulary'
 import useWiktionary from '../../hooks/useWiktionary'
 import { analyzeWordWithGemini } from '../../services/geminiService'
+import { analyzeWordWithGroq } from '../../services/groqService'
 import { enqueueWordLookup } from '../../services/offlineQueueService'
 
 interface VocabPopupProps {
@@ -20,23 +21,20 @@ interface VocabPopupProps {
 }
 
 function readableError(message: string) {
-  if (message === 'OFFLINE_GEMINI') {
+  if (message === 'OFFLINE_GEMINI' || message === 'OFFLINE_GROQ') {
     return 'لا يوجد اتصال بالإنترنت حاليًا.'
   }
   if (message === 'GEMINI_RATE_LIMIT') {
-    return 'تم الوصول لحد الطلبات. حاول بعد قليل.'
+    return 'تم الوصول لحد الطلبات في Gemini. حاول بعد قليل.'
+  }
+  if (message.includes('GROQ_HTTP_429')) {
+    return 'تم الوصول لحد الطلبات في Groq. حاول بعد قليل.'
   }
   if (message === 'GEMINI_UNAVAILABLE' || message === 'GEMINI_HTTP_503') {
-    return 'خدمة Gemini غير متاحة مؤقتًا. حاول بعد قليل أو أضف الطلب للطابور.'
+    return 'خدمة Gemini غير متاحة مؤقتًا. حاول بعد قليل أو استخدم Groq.'
   }
-  if (message === 'GEMINI_NOT_FOUND') {
-    return 'تعذر الوصول إلى نموذج Gemini الحالي. تحقق من الإعدادات أو حاول لاحقًا.'
-  }
-  if (message === 'GEMINI_AUTH_ERROR') {
-    return 'مفتاح Gemini غير صالح أو لا يملك صلاحية كافية.'
-  }
-  if (message === 'GEMINI_NETWORK') {
-    return 'حدثت مشكلة اتصال مؤقتة أثناء التواصل مع Gemini.'
+  if (message === 'GROQ_HTTP_401') {
+    return 'مفتاح Groq غير صالح. تحقق من الإعدادات.'
   }
   return message
 }
@@ -52,11 +50,16 @@ export default function VocabPopup({
 }: VocabPopupProps) {
   const [saved, setSaved] = useState(false)
   const [runGemini, setRunGemini] = useState(false)
+  const [runGroq, setRunGroq] = useState(false)
   
   const isPhrase = word.trim().includes(' ')
   
-  const runner = useCallback(() => analyzeWordWithGemini(word, context), [word, context])
-  const { data, loading, error } = useGemini(runner, open && runGemini)
+  const geminiRunner = useCallback(() => analyzeWordWithGemini(word, context), [word, context])
+  const { data: geminiData, loading: geminiLoading, error: geminiError } = useGemini(geminiRunner, open && runGemini)
+
+  const groqRunner = useCallback(() => analyzeWordWithGroq(word, context), [word, context])
+  const { data: groqData, loading: groqLoading, error: groqError } = useGemini(groqRunner, open && runGroq)
+
   const { saving, saveWord } = useVocabulary(uid)
   const { translationEn, translationTa, loading: myMemoryLoading } = useMyMemory(word, open)
   const { translationTa: lingvaTa, loading: lingvaLoading } = useLingva(word, open)
@@ -66,18 +69,21 @@ export default function VocabPopup({
   useEffect(() => {
     setSaved(false)
     setRunGemini(false)
+    setRunGroq(false)
   }, [word, open])
 
+  const currentData = geminiData || groqData
+
   const canQueue = useMemo(
-    () => ['OFFLINE_GEMINI', 'GEMINI_RATE_LIMIT', 'GEMINI_UNAVAILABLE', 'GEMINI_NETWORK'].includes(error),
-    [error],
+    () => ['OFFLINE_GEMINI', 'GEMINI_RATE_LIMIT', 'GEMINI_UNAVAILABLE', 'GEMINI_NETWORK'].includes(geminiError),
+    [geminiError],
   )
 
   const save = async () => {
-    if (!data) return
+    if (!currentData) return
 
     try {
-      await saveWord(word, data, context, kitabId, chapterId)
+      await saveWord(word, currentData, context, kitabId, chapterId)
       setSaved(true)
       toast.success('تم حفظ المفردة')
     } catch (reason) {
@@ -121,6 +127,72 @@ export default function VocabPopup({
         {/* Content Area (Scrollable) */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5 custom-scrollbar text-right" dir="rtl">
           
+          {/* AI Analysis Section (Gemini or Groq) */}
+          <div className="rounded-2xl border border-[#1B5E20]/20 bg-[#1B5E20]/5 p-5 shadow-inner space-y-4">
+            <div className="flex items-center justify-between flex-row-reverse">
+               <h4 className="text-xs font-bold text-[#1B5E20] uppercase tracking-wider opacity-60">تحليل الذكاء الاصطناعي</h4>
+               <div className="flex gap-2">
+                  <span className={`w-2 h-2 rounded-full ${geminiData ? 'bg-blue-500' : 'bg-gray-300'}`} title="Gemini" />
+                  <span className={`w-2 h-2 rounded-full ${groqData ? 'bg-orange-500' : 'bg-gray-300'}`} title="Groq" />
+               </div>
+            </div>
+            
+            {!currentData && !geminiLoading && !groqLoading ? (
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRunGemini(true)}
+                  className="rounded-xl bg-white/70 py-3 text-sm font-semibold text-[#1B5E20] border border-[#1B5E20]/20 hover:bg-[#1B5E20]/5 transition-colors flex flex-col items-center gap-1"
+                >
+                  <span>Gemini</span>
+                  <span className="text-[10px] opacity-60">Flash 2.0</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRunGroq(true)}
+                  className="rounded-xl bg-white/70 py-3 text-sm font-semibold text-[#1B5E20] border border-[#1B5E20]/20 hover:bg-[#1B5E20]/5 transition-colors flex flex-col items-center gap-1"
+                >
+                  <span>Groq</span>
+                  <span className="text-[10px] opacity-60">Llama 3.1</span>
+                </button>
+              </div>
+            ) : null}
+
+            {(geminiLoading || groqLoading) ? (
+              <div className="flex flex-col gap-2">
+                <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-3/4" />
+                <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-full" />
+                <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-2/3" />
+              </div>
+            ) : null}
+
+            {geminiError && !runGroq && <p className="mb-2 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-100">{readableError(geminiError)}</p>}
+            {groqError && !runGemini && <p className="mb-2 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-100">{readableError(groqError)}</p>}
+
+            {currentData ? (
+              <div className="space-y-4 text-sm text-[#3E2723] animate-in fade-in slide-in-from-top-2 duration-300">
+                <div>
+                  <span className="block text-[10px] font-bold text-[#1B5E20] mb-1 opacity-70 uppercase">المعنى (العربية)</span>
+                  <p className="font-medium text-lg leading-snug">{currentData.meaningAr}</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="text-right">
+                    <span className="block text-[10px] font-bold text-[#1B5E20] mb-1 opacity-70 uppercase">அர்த்தம் (Tamil)</span>
+                    <p className="font-medium">{currentData.meaningTa}</p>
+                  </div>
+                  <div className="text-left font-sans">
+                    <span className="block text-[10px] font-bold text-[#1B5E20] mb-1 opacity-70 uppercase text-right">Meaning (English)</span>
+                    <p className="font-medium">{currentData.meaningEn}</p>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-[#1B5E20]/10 flex justify-between items-center text-[10px] opacity-40 italic">
+                   <span>مصدر التحليل: {geminiData ? 'Gemini 2.0' : 'Groq Llama 3.1'}</span>
+                   <button onClick={() => { setRunGemini(false); setRunGroq(false); }} className="hover:text-[#1B5E20] underline">تغيير النموذج</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           {/* Quick Translation (MyMemory) */}
           {(translationEn || translationTa || myMemoryLoading) && (
             <div className="group rounded-2xl border border-[#1B5E20]/10 bg-white/70 p-4 shadow-sm hover:shadow-md transition-shadow">
@@ -233,49 +305,6 @@ export default function VocabPopup({
               )}
             </div>
           )}
-
-          {/* Gemini Analysis Section */}
-          <div className="rounded-2xl border border-[#1B5E20]/20 bg-[#1B5E20]/5 p-5 shadow-inner">
-            <h4 className="mb-3 text-xs font-bold text-[#1B5E20] uppercase tracking-wider opacity-60">تحليل مفصل (Gemini AI)</h4>
-            
-            {!runGemini && !data && !loading && !error ? (
-              <button
-                type="button"
-                onClick={() => setRunGemini(true)}
-                className="w-full rounded-xl bg-white/70 py-3 text-sm font-semibold text-[#1B5E20] border border-[#1B5E20]/20 hover:bg-[#1B5E20]/5 transition-colors"
-              >
-                اطلب تحليل الذكاء الاصطناعي
-              </button>
-            ) : null}
-
-            {loading ? (
-              <div className="flex flex-col gap-2">
-                <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-3/4" />
-                <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-full" />
-                <div className="h-4 bg-[#1B5E20]/10 rounded-full animate-pulse w-2/3" />
-              </div>
-            ) : null}
-            {error ? <p className="mb-2 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-100">{readableError(error)}</p> : null}
-
-            {data ? (
-              <div className="space-y-4 text-sm text-[#3E2723]">
-                <div>
-                  <span className="block text-[10px] font-bold text-[#1B5E20] mb-1 opacity-70 uppercase">المعنى (العربية)</span>
-                  <p className="font-medium text-lg leading-snug">{data.meaningAr}</p>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="text-right">
-                    <span className="block text-[10px] font-bold text-[#1B5E20] mb-1 opacity-70 uppercase">அர்த்தம் (Tamil)</span>
-                    <p className="font-medium">{data.meaningTa}</p>
-                  </div>
-                  <div className="text-left font-sans">
-                    <span className="block text-[10px] font-bold text-[#1B5E20] mb-1 opacity-70 uppercase text-right">Meaning (English)</span>
-                    <p className="font-medium">{data.meaningEn}</p>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
         </div>
 
         {/* Footer Actions */}
@@ -283,7 +312,7 @@ export default function VocabPopup({
           <button
             type="button"
             onClick={() => void save()}
-            disabled={!data || saving || saved}
+            disabled={!currentData || saving || saved}
             className="flex-1 min-w-[120px] rounded-xl bg-[#1B5E20] px-6 py-3 text-sm font-bold text-white shadow-lg shadow-[#1B5E20]/20 hover:bg-[#2E7D32] disabled:opacity-50 transition-all active:scale-95"
           >
             {saved ? '✓ تم الحفظ' : saving ? 'جاري الحفظ...' : 'حفظ في المفردات'}

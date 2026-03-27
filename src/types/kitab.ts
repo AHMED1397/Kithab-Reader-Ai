@@ -1,4 +1,4 @@
-﻿export type KitabCategory = 'فقه' | 'تفسير' | 'حديث' | 'نحو' | 'صرف' | 'أدب' | 'تاريخ' | 'عقيدة'
+export type KitabCategory = 'فقه' | 'تفسير' | 'حديث' | 'نحو' | 'صرف' | 'أدب' | 'تاريخ' | 'عقيدة'
 export type KitabLevel = 'مبتدئ' | 'متوسط' | 'متقدم'
 
 export interface KitabNodeInput {
@@ -49,14 +49,17 @@ export interface KitabDoc {
   addedBy?: string
 }
 
-export interface KitabChapter {
+export interface ChapterMetadata {
   id: string
   title: string
-  content: string
   order: number
   nodeType?: string
   depth?: number
   path?: string[]
+}
+
+export interface KitabChapter extends ChapterMetadata {
+  content: string
 }
 
 export interface ReadingProgress {

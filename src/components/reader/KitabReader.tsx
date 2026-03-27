@@ -3,8 +3,8 @@ import toast from 'react-hot-toast'
 import useAuth from '../../hooks/useAuth'
 import useReaderPreferences from '../../hooks/useReaderPreferences'
 import useReadingProgress from '../../hooks/useReadingProgress'
-import { updateChapterContent } from '../../services/kitabService'
-import type { KitabChapter, KitabDoc } from '../../types/kitab'
+import { getChapterContent, updateChapterContent } from '../../services/kitabService'
+import type { ChapterMetadata, KitabDoc } from '../../types/kitab'
 import SentenceExplainer from '../vocab/SentenceExplainer'
 import VocabPopup from '../vocab/VocabPopup'
 import ChapterNav from './ChapterNav'
@@ -14,7 +14,7 @@ import TutorialPopup from './TutorialPopup'
 
 interface KitabReaderProps {
   kitab: KitabDoc
-  chapters: KitabChapter[]
+  chaptersMetadata: ChapterMetadata[]
 }
 
 interface SelectionState {
@@ -34,7 +34,7 @@ function surroundingContext(words: string[], index: number) {
   return words.slice(start, end).join(' ')
 }
 
-export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
+export default function KitabReader({ kitab, chaptersMetadata }: KitabReaderProps) {
   const { user, profile } = useAuth()
   const [collapsedNav, setCollapsedNav] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -54,6 +54,10 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   const [editContent, setEditContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
+  // Lazy loading states
+  const [loadedChapters, setLoadedChapters] = useState<Record<string, string>>({})
+  const [isLoadingContent, setIsLoadingContent] = useState(false)
+
   const { preferences, themeStyles, updatePreference } = useReaderPreferences(
     user?.uid,
     profile?.preferences,
@@ -62,10 +66,10 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   const { progress, resolvedChapterId, persist } = useReadingProgress({
     uid: user?.uid,
     kitabId: kitab.id,
-    initialChapterId: chapters[0]?.id,
+    initialChapterId: chaptersMetadata[0]?.id,
   })
 
-  const [currentChapterId, setCurrentChapterId] = useState(chapters[0]?.id ?? '')
+  const [currentChapterId, setCurrentChapterId] = useState(chaptersMetadata[0]?.id ?? '')
 
   useEffect(() => {
     if (resolvedChapterId) {
@@ -74,23 +78,58 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   }, [resolvedChapterId])
 
   const currentIndex = useMemo(
-    () => Math.max(0, chapters.findIndex((chapter) => chapter.id === currentChapterId)),
-    [chapters, currentChapterId],
+    () => Math.max(0, chaptersMetadata.findIndex((chapter) => chapter.id === currentChapterId)),
+    [chaptersMetadata, currentChapterId],
   )
 
-  const currentChapter = chapters[currentIndex] ?? chapters[0]
+  const currentChapterMetadata = chaptersMetadata[currentIndex] ?? chaptersMetadata[0]
+
+  // Effect to load chapter content
+  useEffect(() => {
+    if (!currentChapterId) return
+
+    if (loadedChapters[currentChapterId]) return
+
+    let active = true
+
+    const fetchContent = async () => {
+      try {
+        setIsLoadingContent(true)
+        const content = await getChapterContent(kitab.id, currentChapterId)
+        if (active) {
+          setLoadedChapters((prev) => ({ ...prev, [currentChapterId]: content }))
+        }
+      } catch {
+        if (active) {
+          toast.error('تعذر تحميل محتوى الفصل')
+        }
+      } finally {
+        if (active) {
+          setIsLoadingContent(false)
+        }
+      }
+    }
+
+    void fetchContent()
+
+    return () => {
+      active = false
+    }
+  }, [currentChapterId, kitab.id, loadedChapters])
+
+  const currentContent = loadedChapters[currentChapterId] ?? ''
 
   useEffect(() => {
-    if (!contentRef.current || !currentChapter) {
+    if (!contentRef.current || !currentChapterId || isLoadingContent) {
       return
     }
 
-    if (restoredChapterRef.current === currentChapter.id) {
+    if (restoredChapterRef.current === currentChapterId) {
       return
     }
 
     const container = contentRef.current
-    const shouldRestoreFromSaved = progress?.currentChapter === currentChapter.id
+    const shouldRestoreFromSaved = progress?.currentChapter === currentChapterId
 
     isProgrammaticScrollRef.current = true
 
@@ -102,13 +141,13 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
         container.scrollTop = 0
       }
 
-      restoredChapterRef.current = currentChapter.id
+      restoredChapterRef.current = currentChapterId
 
       setTimeout(() => {
         isProgrammaticScrollRef.current = false
       }, 60)
     })
-  }, [currentChapter, progress?.currentChapter, progress?.scrollPosition])
+  }, [currentChapterId, isLoadingContent, progress?.currentChapter, progress?.scrollPosition])
 
   useEffect(() => {
     setSelection(null)
@@ -117,7 +156,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     setActiveSentence('')
     setPendingSelectionIndex(null)
     restoredChapterRef.current = ''
-    setTocOpen(false) // Close TOC on mobile when chapter changes
+    setTocOpen(false)
     setIsEditing(false)
   }, [currentChapterId])
 
@@ -131,7 +170,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
 
 
   const onScroll = () => {
-    if (!contentRef.current || !currentChapter || isProgrammaticScrollRef.current) {
+    if (!contentRef.current || !currentChapterId || isProgrammaticScrollRef.current) {
       return
     }
 
@@ -144,7 +183,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     }
 
     persistTimerRef.current = window.setTimeout(() => {
-      persist(currentChapter.id, scrollPosition, currentIndex === chapters.length - 1 && scrollPosition > 0.98)
+      persist(currentChapterId, scrollPosition, currentIndex === chaptersMetadata.length - 1 && scrollPosition > 0.98)
     }, 180)
   }
 
@@ -182,11 +221,11 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   }
 
   const nextChapter = () => {
-    if (currentIndex >= chapters.length - 1) {
+    if (currentIndex >= chaptersMetadata.length - 1) {
       return
     }
 
-    setCurrentChapterId(chapters[currentIndex + 1].id)
+    setCurrentChapterId(chaptersMetadata[currentIndex + 1].id)
   }
 
   const previousChapter = () => {
@@ -194,12 +233,12 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
       return
     }
 
-    setCurrentChapterId(chapters[currentIndex - 1].id)
+    setCurrentChapterId(chaptersMetadata[currentIndex - 1].id)
   }
 
   const handleEditToggle = () => {
     if (!isEditing) {
-      setEditContent(currentChapter.content)
+      setEditContent(currentContent)
     }
     setIsEditing(!isEditing)
   }
@@ -207,14 +246,13 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
   const handleSave = async () => {
     try {
       setIsSaving(true)
-      await updateChapterContent(kitab.id, currentChapter.id, editContent)
+      await updateChapterContent(kitab.id, currentChapterId, editContent)
       toast.success('تم حفظ التعديلات بنجاح')
+
+      // Update local cache
+      setLoadedChapters(prev => ({ ...prev, [currentChapterId]: editContent }))
+
       setIsEditing(false)
-      // We don't need to manually update chapters state because it's usually managed by the parent
-      // but if the parent doesn't re-fetch, we might need a way to refresh it.
-      // Since getKitabWithChapters caches, we cleared it in the service.
-      // To force a refresh in the UI, we might need to tell the user to refresh or use a reload.
-      window.location.reload()
     } catch {
       toast.error('تعذر حفظ التعديلات')
     } finally {
@@ -222,13 +260,9 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     }
   }
 
-  if (!currentChapter) {
-    return <p className="rounded-xl bg-white p-4">لا توجد فصول متاحة.</p>
-  }
-
   const parsedData = useMemo(() => {
-    if (!currentChapter) return { words: [], paragraphs: [] }
-    const paragraphs = currentChapter.content.split(/\n\n+|\n/).filter((b: string) => Boolean(b))
+    if (!currentContent) return { words: [], paragraphs: [] }
+    const paragraphs = currentContent.split(/\n\n+|\n/).filter((b: string) => Boolean(b))
     const allWords: string[] = []
     const paraData = paragraphs.map((para: string) => {
       const paraWords = para.split(/\s+/).filter((b: string) => Boolean(b))
@@ -240,7 +274,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
       return data
     })
     return { words: allWords, paragraphs: paraData }
-  }, [currentChapter])
+  }, [currentContent])
 
   const handleWordClick = (index: number) => {
     if (isEditing) return
@@ -255,18 +289,20 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     } else {
       const start = Math.min(pendingSelectionIndex, index)
       const end = Math.max(pendingSelectionIndex, index)
-      
+
       if (end - start < 20) {
-        setWordSelection({
-          word: parsedData.words.slice(start, end + 1).join(' '),
-          context: surroundingContext(parsedData.words, start),
-        })
+        const selectedPhrase = parsedData.words.slice(start, end + 1).join(' ')
+        openSentenceExplainer(selectedPhrase)
       }
       setPendingSelectionIndex(null)
     }
   }
 
   const isAdmin = profile?.role === 'admin'
+
+  if (!currentChapterMetadata) {
+    return <p className="rounded-xl bg-white p-4">لا توجد فصول متاحة.</p>
+  }
 
   return (
     <section className="space-y-3">
@@ -282,11 +318,12 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
             <button
               type="button"
               onClick={handleEditToggle}
+              disabled={isLoadingContent}
               className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
                 isEditing
                   ? 'border-red-400 bg-red-50 text-red-600'
                   : 'border-[#1B5E20]/30 text-[#1B5E20] hover:bg-[#1B5E20]/5'
-              }`}
+              } disabled:opacity-50`}
             >
               {isEditing ? 'إلغاء التعديل' : 'تعديل النص'}
             </button>
@@ -309,18 +346,16 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-        {/* TOC for Desktop */}
         <div className="hidden lg:block">
           <ChapterNav
-            chapters={chapters}
-            currentChapterId={currentChapter.id}
+            chapters={chaptersMetadata}
+            currentChapterId={currentChapterId}
             collapsed={collapsedNav}
             onToggle={() => setCollapsedNav((prev) => !prev)}
             onSelect={setCurrentChapterId}
           />
         </div>
 
-        {/* TOC for Mobile (Drawer) */}
         {tocOpen && (
           <div className="fixed inset-0 z-50 flex lg:hidden">
             <div
@@ -339,8 +374,8 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
               </div>
               <div className="flex-1 overflow-auto">
                 <ChapterNav
-                  chapters={chapters}
-                  currentChapterId={currentChapter.id}
+                  chapters={chaptersMetadata}
+                  currentChapterId={currentChapterId}
                   collapsed={false}
                   onToggle={() => {}}
                   onSelect={setCurrentChapterId}
@@ -352,7 +387,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
 
         <article className="space-y-3 rounded-2xl border border-[#1B5E20]/20 bg-[#FDF6E3] p-4 shadow-sm md:p-6">
           <div className="flex items-center justify-between">
-            <h2 className="font-['Amiri'] text-2xl font-bold text-[#1B5E20] sm:text-3xl">{currentChapter.title}</h2>
+            <h2 className="font-['Amiri'] text-2xl font-bold text-[#1B5E20] sm:text-3xl">{currentChapterMetadata.title}</h2>
             {isEditing && (
               <button
                 type="button"
@@ -370,7 +405,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
             onScroll={onScroll}
             onMouseUp={onTextMouseUp}
             onTouchEnd={onTextMouseUp}
-            className="max-h-[60vh] overflow-auto rounded-xl border border-[#1B5E20]/10 p-4 sm:max-h-[70vh] sm:p-6"
+            className="max-h-[60vh] min-h-[300px] overflow-auto rounded-xl border border-[#1B5E20]/10 p-4 sm:max-h-[70vh] sm:p-6"
             style={{
               background: themeStyles.background,
               color: themeStyles.color,
@@ -379,7 +414,11 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
               fontFamily: preferences.fontFamily,
             }}
           >
-            {isEditing ? (
+            {isLoadingContent ? (
+              <div className="flex h-full items-center justify-center py-20">
+                <p className="animate-pulse text-lg font-bold text-[#1B5E20]">جاري تحميل المحتوى...</p>
+              </div>
+            ) : isEditing ? (
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
@@ -393,7 +432,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
                 spellCheck={false}
                 placeholder="أدخل النص هنا... استخدم **كلمة** لجعل الكلمة عريضة"
               />
-            ) : (
+            ) : currentContent ? (
               parsedData.paragraphs.map((paraWords, pIndex) => (
                 <p key={`p-${pIndex}`} className="mb-4 text-right leading-[inherit]">
                   {paraWords.map(({ word, globalIndex }) => (
@@ -407,6 +446,8 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
                   ))}
                 </p>
               ))
+            ) : (
+              <p className="py-10 text-center text-[#6D4C41]">لا يوجد محتوى في هذا الفصل.</p>
             )}
           </div>
 
@@ -424,7 +465,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
               <button
                 type="button"
                 onClick={nextChapter}
-                disabled={currentIndex >= chapters.length - 1}
+                disabled={currentIndex >= chaptersMetadata.length - 1}
                 className="flex-1 rounded-lg border border-[#1B5E20]/30 py-3 text-sm font-semibold text-[#1B5E20] transition hover:bg-[#1B5E20]/5 disabled:opacity-50 sm:flex-none sm:px-6"
               >
                 الفصل التالي
@@ -451,7 +492,7 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
         word={wordSelection?.word ?? ''}
         context={wordSelection?.context ?? ''}
         kitabId={kitab.id}
-        chapterId={currentChapter.id}
+        chapterId={currentChapterId}
         onClose={() => setWordSelection(null)}
       />
 
@@ -461,8 +502,8 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
         sentence={activeSentence}
         kitabId={kitab.id}
         kitabTitle={kitab.title}
-        chapterId={currentChapter.id}
-        chapterTitle={currentChapter.title}
+        chapterId={currentChapterId}
+        chapterTitle={currentChapterMetadata.title}
         onClose={() => {
           setExplainModalOpen(false)
           setSelection(null)
@@ -481,3 +522,4 @@ export default function KitabReader({ kitab, chapters }: KitabReaderProps) {
     </section>
   )
 }
+
